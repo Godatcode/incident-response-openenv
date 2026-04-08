@@ -2,7 +2,7 @@
 title: Incident Response OpenEnv
 emoji: 🚨
 colorFrom: red
-colorTo: orange
+colorTo: red
 sdk: docker
 tags:
   - openenv
