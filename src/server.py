@@ -29,6 +29,12 @@ app.add_middleware(
 env = IncidentResponseEnv()
 
 
+@app.get("/")
+def root() -> dict:
+    """Root endpoint."""
+    return {"status": "ok", "environment": "incident-response", "version": "1.0.0"}
+
+
 @app.post("/reset", response_model=Observation)
 async def reset(request: Request, task_name: str = "easy_oom_outage") -> Observation:
     """Reset environment to initial state for the given task."""
