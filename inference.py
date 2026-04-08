@@ -26,8 +26,9 @@ from openai import OpenAI
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
-# Accept both HF_TOKEN (guidelines spec) and API_KEY (evaluator injection)
-HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")
+# Evaluator injects API_KEY for LiteLLM proxy — it MUST take priority over HF_TOKEN
+API_KEY = os.getenv("API_KEY") or HF_TOKEN
 
 # HF Spaces uses port 7860; fall back to 8000 for local dev
 ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
@@ -169,7 +170,7 @@ def run_task(task_name: str) -> None:
     last_error = None
 
     try:
-        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
         # Reset environment
