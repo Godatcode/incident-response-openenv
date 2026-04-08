@@ -87,14 +87,10 @@ print('reward:', val, 'done:', d['done'])
 
 # ---------- 7. [END] log format ----------
 echo "--- inference.py [END] log format ---"
-grep -q 'score={score:.2f}' inference.py \
-  && ok "inference.py [END] line contains score= field" \
-  || fail "inference.py [END] line missing score= field"
-
-# Verify full format: [END] success=... steps=... score=... rewards=...
-grep -qE '\[END\].*success=.*steps=.*score=.*rewards=' inference.py \
+# Verify format: [END] success=... steps=... rewards=...  (no score= per spec)
+grep -qE '\[END\].*success=.*steps=.*rewards=' inference.py \
   && ok "inference.py [END] format matches required pattern" \
-  || fail "inference.py [END] format mismatch — expected: [END] success=... steps=... score=... rewards=..."
+  || fail "inference.py [END] format mismatch — expected: [END] success=... steps=... rewards=..."
 
 # ---------- Summary ----------
 echo ""

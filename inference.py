@@ -5,10 +5,10 @@ Usage:
     HF_TOKEN=<your-token> python inference.py
 
 Environment variables:
-    HF_TOKEN    — required. API key / HuggingFace token for the LLM endpoint.
+    HF_TOKEN     — HuggingFace API token (required; also accepts API_KEY)
     API_BASE_URL — LLM API base URL (default: https://api.openai.com/v1)
     MODEL_NAME   — model identifier (default: gpt-4.1-mini)
-    ENV_URL      — base URL of the running environment server (default: http://localhost:8000)
+    ENV_URL      — base URL of the running environment server (default: http://localhost:7860)
 """
 
 import json
@@ -24,11 +24,13 @@ from openai import OpenAI
 # Configuration
 # ---------------------------------------------------------------------------
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4.1-mini")
-API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
+# Accept both HF_TOKEN (guidelines spec) and API_KEY (evaluator injection)
+HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
-ENV_URL = os.environ.get("ENV_URL", "http://localhost:8000")
+# HF Spaces uses port 7860; fall back to 8000 for local dev
+ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
 ENV_NAME = "incident-response"
 TASKS = ["easy_oom_outage", "medium_bad_deploy", "hard_phantom"]
 
@@ -36,30 +38,47 @@ _server_proc: subprocess.Popen | None = None
 
 
 def _ensure_server_running() -> None:
-    """Start the environment server if it is not already reachable."""
-    global _server_proc
-    try:
-        requests.get(f"{ENV_URL}/health", timeout=3)
-        return  # already up
-    except Exception:
-        pass
+    """
+    Ensure the environment server is reachable.
 
-    # Server not reachable — start it in-process
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    _server_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "src.server:app",
-         "--host", "0.0.0.0", "--port", "8000", "--log-level", "error"],
-        cwd=script_dir,
-    )
-    # Wait up to 15 s for it to come up
-    for _ in range(30):
-        time.sleep(0.5)
+    Probes the configured ENV_URL, then common fallback ports, before
+    spawning a local uvicorn process as a last resort.
+    """
+    global _server_proc, ENV_URL
+
+    # Probe candidate URLs in priority order: configured → Docker port → local dev port
+    candidates = [ENV_URL, "http://localhost:7860", "http://localhost:8000"]
+    # deduplicate while preserving order
+    seen: set[str] = set()
+    probe_urls = [u for u in candidates if not (u in seen or seen.add(u))]  # type: ignore[func-returns-value]
+
+    for url in probe_urls:
         try:
-            requests.get(f"{ENV_URL}/health", timeout=2)
+            requests.get(f"{url}/health", timeout=3)
+            ENV_URL = url  # update global so run_task() uses the working URL
             return
         except Exception:
             continue
-    raise RuntimeError("Environment server failed to start")
+
+    # Nothing reachable — spawn a local server on port 8000
+    spawn_port = 8000
+    spawn_url = f"http://localhost:{spawn_port}"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    _server_proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "src.server:app",
+         "--host", "0.0.0.0", f"--port={spawn_port}", "--log-level", "error"],
+        cwd=script_dir,
+    )
+    # Wait up to 20 s for it to come up
+    for _ in range(40):
+        time.sleep(0.5)
+        try:
+            requests.get(f"{spawn_url}/health", timeout=2)
+            ENV_URL = spawn_url
+            return
+        except Exception:
+            continue
+    raise RuntimeError("Environment server failed to start on port 8000")
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -150,7 +169,7 @@ def run_task(task_name: str) -> None:
     last_error = None
 
     try:
-        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
         # Reset environment
@@ -225,9 +244,8 @@ def run_task(task_name: str) -> None:
             f"[STEP] step={steps} action=error reward=0.00 done=true error={last_error}"
         )
 
-    score = max(0.0, min(1.0, sum(rewards)))
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={'true' if success else 'false'} steps={steps} score={score:.2f} rewards={rewards_str}")
+    print(f"[END] success={'true' if success else 'false'} steps={steps} rewards={rewards_str}")
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +258,7 @@ if __name__ == "__main__":
         for task in TASKS:
             run_task(task)
     except Exception as exc:
-        print(f"[END] success=false steps=0 score=0.00 rewards= error={exc}")
+        print(f"[END] success=false steps=0 rewards= error={exc}")
     finally:
         if _server_proc is not None:
             _server_proc.terminate()
