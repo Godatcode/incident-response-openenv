@@ -13,7 +13,9 @@ Environment variables:
 
 import json
 import os
+import subprocess
 import sys
+import time
 
 import requests
 from openai import OpenAI
@@ -22,13 +24,42 @@ from openai import OpenAI
 # Configuration
 # ---------------------------------------------------------------------------
 
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
-API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY")
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4.1-mini")
+API_KEY = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY")
 
-ENV_URL = os.getenv("ENV_URL", "http://localhost:8000")
+ENV_URL = os.environ.get("ENV_URL", "http://localhost:8000")
 ENV_NAME = "incident-response"
 TASKS = ["easy_oom_outage", "medium_bad_deploy", "hard_phantom"]
+
+_server_proc: subprocess.Popen | None = None
+
+
+def _ensure_server_running() -> None:
+    """Start the environment server if it is not already reachable."""
+    global _server_proc
+    try:
+        requests.get(f"{ENV_URL}/health", timeout=3)
+        return  # already up
+    except Exception:
+        pass
+
+    # Server not reachable — start it in-process
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    _server_proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "src.server:app",
+         "--host", "0.0.0.0", "--port", "8000", "--log-level", "error"],
+        cwd=script_dir,
+    )
+    # Wait up to 15 s for it to come up
+    for _ in range(30):
+        time.sleep(0.5)
+        try:
+            requests.get(f"{ENV_URL}/health", timeout=2)
+            return
+        except Exception:
+            continue
+    raise RuntimeError("Environment server failed to start")
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -205,8 +236,12 @@ def run_task(task_name: str) -> None:
 
 if __name__ == "__main__":
     try:
+        _ensure_server_running()
         for task in TASKS:
             run_task(task)
     except Exception as exc:
         print(f"[END] success=false steps=0 score=0.00 rewards= error={exc}")
+    finally:
+        if _server_proc is not None:
+            _server_proc.terminate()
     sys.exit(0)
