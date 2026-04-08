@@ -5,81 +5,41 @@ Usage:
     HF_TOKEN=<your-token> python inference.py
 
 Environment variables:
-    HF_TOKEN     — HuggingFace API token (required; also accepts API_KEY)
+    HF_TOKEN     — HuggingFace API token (required)
     API_BASE_URL — LLM API base URL (default: https://api.openai.com/v1)
     MODEL_NAME   — model identifier (default: gpt-4.1-mini)
-    ENV_URL      — base URL of the running environment server (default: http://localhost:7860)
 """
 
 import json
 import os
-import subprocess
 import sys
-import time
 
-import requests
 from openai import OpenAI
 
+from src.env import IncidentResponseEnv
+from src.models import Action
+
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration — read env vars exactly as the evaluator injects them
 # ---------------------------------------------------------------------------
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
 HF_TOKEN = os.getenv("HF_TOKEN")
-# Evaluator injects API_KEY for LiteLLM proxy — it MUST take priority over HF_TOKEN
+
+# Evaluator injects API_KEY for the LiteLLM proxy; use it if present,
+# otherwise fall back to HF_TOKEN for standalone runs.
 API_KEY = os.getenv("API_KEY") or HF_TOKEN
 
-# HF Spaces uses port 7860; fall back to 8000 for local dev
-ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
 ENV_NAME = "incident-response"
 TASKS = ["easy_oom_outage", "medium_bad_deploy", "hard_phantom"]
 
-_server_proc: subprocess.Popen | None = None
-
-
-def _ensure_server_running() -> None:
-    """
-    Ensure the environment server is reachable.
-
-    Probes the configured ENV_URL, then common fallback ports, before
-    spawning a local uvicorn process as a last resort.
-    """
-    global _server_proc, ENV_URL
-
-    # Probe candidate URLs in priority order: configured → Docker port → local dev port
-    candidates = [ENV_URL, "http://localhost:7860", "http://localhost:8000"]
-    # deduplicate while preserving order
-    seen: set[str] = set()
-    probe_urls = [u for u in candidates if not (u in seen or seen.add(u))]  # type: ignore[func-returns-value]
-
-    for url in probe_urls:
-        try:
-            requests.get(f"{url}/health", timeout=3)
-            ENV_URL = url  # update global so run_task() uses the working URL
-            return
-        except Exception:
-            continue
-
-    # Nothing reachable — spawn a local server on port 8000
-    spawn_port = 8000
-    spawn_url = f"http://localhost:{spawn_port}"
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    _server_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "src.server:app",
-         "--host", "0.0.0.0", f"--port={spawn_port}", "--log-level", "error"],
-        cwd=script_dir,
-    )
-    # Wait up to 20 s for it to come up
-    for _ in range(40):
-        time.sleep(0.5)
-        try:
-            requests.get(f"{spawn_url}/health", timeout=2)
-            ENV_URL = spawn_url
-            return
-        except Exception:
-            continue
-    raise RuntimeError("Environment server failed to start on port 8000")
+# Initialize OpenAI client at module level (as shown in the guidelines example).
+# In the evaluator, API_KEY is always set. Guard for local dev without a key.
+if API_KEY:
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+else:
+    client = None
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -114,8 +74,12 @@ Respond ONLY with a single JSON object. No explanation, no markdown."""
 # ---------------------------------------------------------------------------
 
 
-def format_observation(obs: dict) -> str:
-    """Format observation dict into readable text for the LLM."""
+def format_observation(obs) -> str:
+    """Format Observation model into readable text for the LLM."""
+    # Handle both Pydantic model and dict
+    if hasattr(obs, "model_dump"):
+        obs = obs.model_dump()
+
     parts = []
 
     parts.append("=== ACTIVE ALERTS ===")
@@ -142,11 +106,11 @@ def format_observation(obs: dict) -> str:
     parts.append("\n=== DEPENDENCY GRAPH ===")
     for svc, deps in obs["dependency_graph"].items():
         dep_str = ", ".join(deps) if deps else "none"
-        parts.append(f"  {svc} → depends on: {dep_str}")
+        parts.append(f"  {svc} -> depends on: {dep_str}")
 
     parts.append("\n=== INCIDENT TIMELINE ===")
     for event in obs["incident_timeline"]:
-        parts.append(f"  • {event}")
+        parts.append(f"  - {event}")
 
     if obs.get("last_action_result"):
         parts.append(f"\n=== LAST ACTION RESULT ===\n{obs['last_action_result']}")
@@ -160,7 +124,7 @@ def format_observation(obs: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def run_task(task_name: str) -> None:
+def run_task(env: IncidentResponseEnv, task_name: str) -> None:
     """Run a single task episode and print formatted output."""
     print(f"[START] task={task_name} env={ENV_NAME} model={MODEL_NAME}")
 
@@ -170,21 +134,20 @@ def run_task(task_name: str) -> None:
     last_error = None
 
     try:
-        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+        if client is None:
+            raise RuntimeError("No API key provided. Set API_KEY or HF_TOKEN environment variable.")
+
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-        # Reset environment
-        resp = requests.post(f"{ENV_URL}/reset", params={"task_name": task_name}, timeout=30)
-        resp.raise_for_status()
-        obs = resp.json()
+        # Reset environment (direct Python call — no HTTP)
+        obs = env.reset(task_name)
 
         done = False
         while not done:
-            # Format observation for LLM
             obs_text = format_observation(obs)
             messages.append({"role": "user", "content": obs_text})
 
-            # Get LLM action
+            # LLM call through the proxy
             completion = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=messages,
@@ -204,25 +167,13 @@ def run_task(task_name: str) -> None:
             try:
                 action = json.loads(clean)
             except json.JSONDecodeError:
-                # Fallback: safe default action
                 action = {"action_type": "check_logs", "target_service": "api-gateway"}
 
-            # Step environment
-            step_resp = requests.post(
-                f"{ENV_URL}/step", json=action, timeout=30
-            )
-            step_resp.raise_for_status()
-            result = step_resp.json()
+            # Step environment (direct Python call — no HTTP)
+            obs, reward_obj, done, info = env.step(action)
 
-            obs = result["observation"]
-            reward_obj = result["reward"]
-            reward = (
-                reward_obj["value"]
-                if isinstance(reward_obj, dict)
-                else float(reward_obj)
-            )
-            done = result["done"]
-            last_error = result.get("info", {}).get("last_action_error")
+            reward = reward_obj.value if hasattr(reward_obj, "value") else float(reward_obj)
+            last_error = info.get("last_action_error") if isinstance(info, dict) else None
 
             steps += 1
             rewards.append(reward)
@@ -254,13 +205,12 @@ def run_task(task_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    env = IncidentResponseEnv()
     try:
-        _ensure_server_running()
         for task in TASKS:
-            run_task(task)
+            run_task(env, task)
     except Exception as exc:
-        print(f"[END] success=false steps=0 rewards= error={exc}")
+        print(f"[END] success=false steps=0 rewards=0.00 error={exc}")
     finally:
-        if _server_proc is not None:
-            _server_proc.terminate()
+        env.close()
     sys.exit(0)
