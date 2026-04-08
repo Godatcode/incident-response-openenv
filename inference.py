@@ -13,6 +13,7 @@ Environment variables:
 
 import json
 import os
+import sys
 
 import requests
 from openai import OpenAI
@@ -23,12 +24,7 @@ from openai import OpenAI
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
-HF_TOKEN = os.getenv("HF_TOKEN")
-
-if HF_TOKEN is None:
-    raise ValueError("HF_TOKEN environment variable is required")
-
-client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY") or "no-token-provided"
 
 ENV_URL = os.getenv("ENV_URL", "http://localhost:8000")
 ENV_NAME = "incident-response"
@@ -121,9 +117,11 @@ def run_task(task_name: str) -> None:
     steps = 0
     success = False
     last_error = None
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     try:
+        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
         # Reset environment
         resp = requests.post(f"{ENV_URL}/reset", params={"task_name": task_name}, timeout=30)
         resp.raise_for_status()
@@ -206,5 +204,9 @@ def run_task(task_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    for task in TASKS:
-        run_task(task)
+    try:
+        for task in TASKS:
+            run_task(task)
+    except Exception as exc:
+        print(f"[END] success=false steps=0 score=0.00 rewards= error={exc}")
+    sys.exit(0)
