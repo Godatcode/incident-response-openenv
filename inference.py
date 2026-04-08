@@ -24,7 +24,7 @@ from openai import OpenAI
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
-HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY") or "no-token-provided"
+API_KEY = os.getenv("API_KEY") or os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY")
 
 ENV_URL = os.getenv("ENV_URL", "http://localhost:8000")
 ENV_NAME = "incident-response"
@@ -119,7 +119,7 @@ def run_task(task_name: str) -> None:
     last_error = None
 
     try:
-        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
         # Reset environment
