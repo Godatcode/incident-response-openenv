@@ -199,7 +199,7 @@ class EasyOomOutageTask(BaseTask):
             ground_truth_affected_services=self.ground_truth_affected_services,
             ground_truth_optimal_actions=self.ground_truth_optimal_actions,
             checkpoints_hit=self._checkpoints_hit,
-            cumulative_reward=self._cumulative_reward,
+            cumulative_reward=min(0.99, max(0.01, self._cumulative_reward)),
             done=self._done,
         )
 
