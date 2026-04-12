@@ -84,7 +84,7 @@ def test_invalid_service_returns_penalty(env):
     obs, reward, done, info = env.step(
         Action(action_type=ActionType.CHECK_LOGS, target_service="nonexistent-svc")
     )
-    assert reward.value < 0
+    assert reward.value == 0.0
     assert "last_action_error" in info
     assert done is False
 

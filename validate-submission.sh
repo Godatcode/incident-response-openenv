@@ -1,98 +1,55 @@
 #!/usr/bin/env bash
-# Pre-validation script for Incident Response OpenEnv submission.
-# Usage: ./validate-submission.sh <base_url>
-#   e.g. ./validate-submission.sh http://localhost:8000
+# Runtime validation helper aligned with the OpenEnv server contract.
 
 set -euo pipefail
 
-BASE="${1:-http://localhost:8000}"
-PASS=0
-FAIL=0
+BASE_URL="${1:-http://localhost:8000}"
 
-ok()   { echo "[PASS] $*"; PASS=$((PASS+1)); }
-fail() { echo "[FAIL] $*"; FAIL=$((FAIL+1)); }
+echo "--- openenv runtime validation ---"
+python3 - <<'PY' "$BASE_URL"
+import json
+import sys
 
-# ---------- 1. Health ----------
-echo "--- /health ---"
-resp=$(curl -sf "$BASE/health") || { fail "/health unreachable"; echo "Aborting: server not running at $BASE"; exit 1; }
-echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('status')=='ok', d" \
-  && ok "/health returns {status: ok}" \
-  || fail "/health bad response: $resp"
+from openenv.cli._validation import validate_running_environment
 
-# ---------- 2. Tasks ----------
-echo "--- /tasks ---"
-resp=$(curl -sf "$BASE/tasks")
-echo "$resp" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-tasks = d.get('tasks', [])
-required = {'easy_oom_outage', 'medium_bad_deploy', 'hard_phantom'}
-missing = required - set(tasks)
-assert not missing, f'Missing tasks: {missing}'
-print('tasks:', tasks)
-" && ok "/tasks lists all three tasks" || fail "/tasks missing required tasks: $resp"
+base_url = sys.argv[1]
+report = validate_running_environment(base_url)
+print(json.dumps(report, indent=2))
+if not report.get("passed", False):
+    raise SystemExit(1)
+PY
 
-# ---------- 3. /reset — empty JSON body, no query params ----------
-echo "--- /reset (empty JSON body {}) ---"
-resp=$(curl -sf -X POST -d '{}' "$BASE/reset")
-echo "$resp" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-assert 'active_alerts' in d, 'missing active_alerts'
-assert 'service_statuses' in d, 'missing service_statuses'
-assert 'step_number' in d, 'missing step_number'
-assert 'max_steps' in d, 'missing max_steps'
-assert d['max_steps'] == 10, f'expected easy task max_steps=10, got {d[\"max_steps\"]}'
-print('easy task, max_steps:', d['max_steps'])
-" && ok "/reset {} defaults to easy_oom_outage" || fail "/reset {} wrong response: $resp"
+echo "--- task catalog ---"
+TASKS_JSON="$(curl -sf "$BASE_URL/tasks")"
+python3 - <<'PY' "$TASKS_JSON"
+import json
+import sys
 
-# ---------- 4. /reset — JSON body with task_name ----------
-echo "--- /reset (JSON body task_name) ---"
-resp=$(curl -sf -X POST -H 'Content-Type: application/json' -d '{"task_name":"medium_bad_deploy"}' "$BASE/reset")
-echo "$resp" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-assert d['max_steps'] == 15, f'expected medium max_steps=15, got {d[\"max_steps\"]}'
-print('medium task, max_steps:', d['max_steps'])
-" && ok "/reset with task_name in JSON body works" || fail "/reset JSON body: $resp"
+payload = json.loads(sys.argv[1])
+required = {"easy_oom_outage", "medium_bad_deploy", "hard_phantom"}
+tasks = set(payload.get("tasks", []))
+missing = sorted(required - tasks)
+if missing:
+    raise SystemExit(f"Missing tasks: {missing}")
+print(json.dumps(payload, indent=2))
+PY
 
-# ---------- 5. /reset — query param (backward compat) ----------
-echo "--- /reset (query param) ---"
-resp=$(curl -sf -X POST "$BASE/reset?task_name=hard_phantom")
-echo "$resp" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-assert d['max_steps'] == 20, f'expected hard max_steps=20, got {d[\"max_steps\"]}'
-print('hard task, max_steps:', d['max_steps'])
-" && ok "/reset query param works" || fail "/reset query param: $resp"
+echo "--- inference contract smoke check ---"
+python3 - <<'PY'
+from pathlib import Path
 
-# ---------- 6. /step ----------
-echo "--- /step ---"
-# First reset to easy
-curl -sf -X POST -d '{}' "$BASE/reset" > /dev/null
-resp=$(curl -sf -X POST -H 'Content-Type: application/json' \
-  -d '{"action_type":"check_logs","target_service":"user-service"}' "$BASE/step")
-echo "$resp" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-assert 'observation' in d, 'missing observation'
-assert 'reward' in d, 'missing reward'
-assert 'done' in d, 'missing done'
-assert 'info' in d, 'missing info'
-r = d['reward']
-val = r['value'] if isinstance(r, dict) else float(r)
-assert 0.0 <= val <= 1.0, f'reward out of [0,1]: {val}'
-print('reward:', val, 'done:', d['done'])
-" && ok "/step returns valid (observation, reward, done, info)" || fail "/step bad response: $resp"
+text = Path("inference.py").read_text()
+required_snippets = [
+    "[START] task=",
+    "[STEP] step=",
+    "[END] success=",
+    "LOCAL_IMAGE_NAME",
+    "HF_TOKEN",
+]
+missing = [snippet for snippet in required_snippets if snippet not in text]
+if missing:
+    raise SystemExit(f"inference.py is missing required contract snippets: {missing}")
+print("inference.py contract markers present")
+PY
 
-# ---------- 7. [END] log format ----------
-echo "--- inference.py [END] log format ---"
-# Verify format: [END] success=... steps=... rewards=...  (no score= per spec)
-grep -qE '\[END\].*success=.*steps=.*rewards=' inference.py \
-  && ok "inference.py [END] format matches required pattern" \
-  || fail "inference.py [END] format mismatch — expected: [END] success=... steps=... rewards=..."
-
-# ---------- Summary ----------
-echo ""
-echo "Results: $PASS passed, $FAIL failed"
-[ "$FAIL" -eq 0 ] && echo "ALL CHECKS PASSED" && exit 0 || exit 1
+echo "ALL CHECKS PASSED"

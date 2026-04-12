@@ -24,21 +24,29 @@ class BaseGrader(ABC):
         prev_checkpoints: list[str],
         new_checkpoints: list[str],
         penalties: float,
-    ) -> tuple[float, list[str], str]:
+    ) -> tuple[float, float, list[str], str]:
         """
-        Compute incremental reward: sum of newly hit checkpoint weights minus penalties.
-        Returns (delta_reward, newly_hit_checkpoints, reason_string).
+        Compute incremental reward.
+
+        Returns:
+          public_delta: reward emitted by the environment, clamped to [0, 1]
+          raw_delta: underlying delta before public clamping, clamped to [-1, 1]
+          newly_hit: newly unlocked checkpoints
+          reason: human-readable explanation
+
+        The public reward is kept non-negative because the evaluator contract
+        expects reward values in [0, 1]. Penalties still affect internal
+        cumulative scoring through raw_delta.
         """
         checkpoints = self.get_checkpoints()
         newly_hit = [c for c in new_checkpoints if c not in prev_checkpoints]
         gained = sum(checkpoints.get(c, 0.0) for c in newly_hit)
-        delta = gained - penalties
-        # Clamp to [-1.0, 1.0]
-        delta = max(-1.0, min(1.0, delta))
+        raw_delta = max(-1.0, min(1.0, gained - penalties))
+        public_delta = max(0.0, min(1.0, raw_delta))
         reason_parts = []
         if newly_hit:
             reason_parts.append(f"Unlocked: {', '.join(newly_hit)} (+{gained:.2f})")
         if penalties > 0:
             reason_parts.append(f"Penalty: -{penalties:.2f}")
         reason = "; ".join(reason_parts) if reason_parts else "No new progress"
-        return delta, newly_hit, reason
+        return public_delta, raw_delta, newly_hit, reason

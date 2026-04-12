@@ -1,52 +1,9 @@
-name: incident-response
-description: "Production Incident Response Simulator — SRE triage environment for training and evaluating LLM agents on real-world production incident diagnosis and resolution."
-version: "1.0.0"
-author: "Team Name"
-tags:
-  - openenv
-  - sre
-  - incident-response
-  - production
-  - real-world
-
-env:
-  entry_point: "src.env:IncidentResponseEnv"
-
-observation_space:
-  type: "text"
-  description: "Structured text observation including active alerts, service statuses, dependency graph, incident timeline, and last action result."
-
-action_space:
-  type: "text"
-  description: "JSON-encoded action with action_type, target_service, and optional parameters."
-  actions:
-    - check_logs
-    - query_metrics
-    - restart_service
-    - rollback_deploy
-    - scale_service
-    - run_healthcheck
-    - mark_resolved
-
-reward_range: [-1.0, 1.0]
-
-tasks:
-  - name: easy_oom_outage
-    description: "Single service OOM crash. Diagnose and restart."
-    difficulty: easy
-    max_steps: 10
-
-  - name: medium_bad_deploy
-    description: "Cascading failures from a bad deployment with red herring."
-    difficulty: medium
-    max_steps: 15
-
-  - name: hard_phantom
-    description: "Intermittent latency from memory leak with multiple red herrings."
-    difficulty: hard
-    max_steps: 20
-
-server:
-  type: fastapi
-  host: "0.0.0.0"
-  port: 8000
+spec_version: 1
+name: incident_response
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
+description: Production incident-response simulator for SRE triage and remediation.
+action: IncidentResponseAction
+observation: IncidentResponseObservation

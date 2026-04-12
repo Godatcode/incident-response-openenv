@@ -130,7 +130,7 @@ class TestMediumBadDeploy:
         _, reward, _, _ = self.task.step(
             Action(action_type=ActionType.ROLLBACK_DEPLOY, target_service="search-service")
         )
-        assert reward.value < 0
+        assert reward.value == 0.0
 
     def test_correct_full_solution(self):
         self.task.reset()
@@ -196,7 +196,7 @@ class TestHardPhantom:
         _, reward, _, _ = self.task.step(
             Action(action_type=ActionType.RESTART_SERVICE, target_service="cache-layer")
         )
-        assert reward.value <= -0.15  # Heavy penalty
+        assert reward.value == 0.0
 
     def test_scale_cache_layer_fixes_incident(self):
         obs, reward, _, _ = self.task.step(
@@ -215,7 +215,7 @@ class TestHardPhantom:
         _, reward, _, _ = self.task.step(
             Action(action_type=ActionType.ROLLBACK_DEPLOY, target_service="auth-service")
         )
-        assert reward.value < 0
+        assert reward.value == 0.0
 
     def test_correct_full_solution(self):
         self.task.reset()

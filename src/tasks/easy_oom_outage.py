@@ -91,7 +91,7 @@ class EasyOomOutageTask(BaseTask):
             )
             penalty = 0.02
             info["last_action_error"] = f"Service '{target}' not found"
-            reward_val = max(-1.0, -penalty)
+            reward_val = 0.0
             self._last_action_result = result_text
             self._action_history.append(
                 {"action_type": atype.value, "target_service": target, "parameters": action.parameters}
@@ -175,11 +175,11 @@ class EasyOomOutageTask(BaseTask):
         )
         self._checkpoints_hit = new_checkpoints
 
-        delta, newly_hit, reason = self._grader.compute_delta_reward(
+        delta, raw_delta, newly_hit, reason = self._grader.compute_delta_reward(
             prev_checkpoints, new_checkpoints, penalty
         )
         self._cumulative_reward = min(
-            1.0, max(0.0, self._cumulative_reward + delta)
+            1.0, max(0.0, self._cumulative_reward + raw_delta)
         )
 
         # Done if max steps reached or mark_resolved called

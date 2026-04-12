@@ -3,6 +3,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
+from openenv.core.env_server.types import Action as OpenEnvAction
+from openenv.core.env_server.types import Observation as OpenEnvObservation
+from openenv.core.env_server.types import State as OpenEnvState
 from pydantic import BaseModel, Field
 
 
@@ -16,7 +19,7 @@ class ActionType(str, Enum):
     MARK_RESOLVED = "mark_resolved"
 
 
-class Action(BaseModel):
+class Action(OpenEnvAction):
     """Agent's action in the environment."""
 
     action_type: ActionType
@@ -47,7 +50,7 @@ class ServiceStatus(BaseModel):
     replicas: int = 1
 
 
-class Observation(BaseModel):
+class Observation(OpenEnvObservation):
     """What the agent sees after each step."""
 
     active_alerts: list[Alert]
@@ -63,11 +66,11 @@ class Observation(BaseModel):
 class Reward(BaseModel):
     """Reward signal."""
 
-    value: float = Field(ge=-1.0, le=1.0)
+    value: float = Field(ge=0.0, le=1.0)
     reason: str  # human-readable explanation
 
 
-class State(BaseModel):
+class State(OpenEnvState):
     """Full internal state (superset of observation — includes hidden ground truth)."""
 
     task_name: str

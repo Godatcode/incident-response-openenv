@@ -269,12 +269,14 @@ class TestHardGrader:
     def test_delta_reward_computation(self):
         prev = []
         new = ["investigated_3_services", "identified_cache_dependency"]
-        delta, newly_hit, reason = self.grader.compute_delta_reward(prev, new, 0.0)
+        delta, raw_delta, newly_hit, reason = self.grader.compute_delta_reward(prev, new, 0.0)
         assert delta == pytest.approx(0.05 + 0.10)
+        assert raw_delta == pytest.approx(0.05 + 0.10)
         assert set(newly_hit) == {"investigated_3_services", "identified_cache_dependency"}
 
     def test_delta_reward_with_penalty(self):
         prev = []
         new = ["investigated_3_services"]
-        delta, _, _ = self.grader.compute_delta_reward(prev, new, 0.20)
-        assert delta == pytest.approx(0.05 - 0.20)
+        delta, raw_delta, _, _ = self.grader.compute_delta_reward(prev, new, 0.20)
+        assert delta == pytest.approx(0.0)
+        assert raw_delta == pytest.approx(0.05 - 0.20)

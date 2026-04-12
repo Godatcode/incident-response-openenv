@@ -114,7 +114,7 @@ class HardPhantomTask(BaseTask):
             )
             return (
                 self._build_observation(),
-                Reward(value=max(-1.0, -penalty), reason=f"Invalid action: {info['last_action_error']}"),
+                Reward(value=0.0, reason=f"Invalid action: {info['last_action_error']}"),
                 self._done,
                 info,
             )
@@ -224,10 +224,12 @@ class HardPhantomTask(BaseTask):
         )
         self._checkpoints_hit = new_checkpoints
 
-        delta, newly_hit, reason = self._grader.compute_delta_reward(
+        delta, raw_delta, newly_hit, reason = self._grader.compute_delta_reward(
             prev_checkpoints, new_checkpoints, penalty
         )
-        self._cumulative_reward = min(1.0, max(0.0, self._cumulative_reward + delta))
+        self._cumulative_reward = min(
+            1.0, max(0.0, self._cumulative_reward + raw_delta)
+        )
 
         if atype == ActionType.MARK_RESOLVED or self._step_number >= self.max_steps:
             self._done = True

@@ -4,6 +4,7 @@ emoji: 🚨
 colorFrom: red
 colorTo: red
 sdk: docker
+app_port: 8000
 tags:
   - openenv
 ---
@@ -35,7 +36,7 @@ Observation (alerts + statuses + dependency graph)
         ↓
    Agent action (JSON)
         ↓
-   Environment step → (new observation, reward, done, info)
+   Environment step → (new observation, reward, done)
         ↓
   Repeat until mark_resolved or max_steps
 ```
@@ -200,7 +201,7 @@ docker run -p 8000:8000 incident-response-env
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn src.server:app --reload
+uvicorn server.app:app --reload --port 8000
 ```
 
 ### API endpoints
@@ -210,34 +211,38 @@ uvicorn src.server:app --reload
 curl http://localhost:8000/tasks
 
 # Start a task
-curl -X POST "http://localhost:8000/reset?task_name=easy_oom_outage"
+curl -X POST "http://localhost:8000/reset" \
+  -H "Content-Type: application/json" \
+  -d '{"task_name":"easy_oom_outage"}'
 
 # Take an action
 curl -X POST "http://localhost:8000/step" \
   -H "Content-Type: application/json" \
-  -d '{"action_type": "check_logs", "target_service": "user-service"}'
+  -d '{"action": {"action_type": "check_logs", "target_service": "user-service"}}'
 
 # Get full state (includes ground truth)
 curl http://localhost:8000/state
+
+# Get OpenEnv metadata and schemas
+curl http://localhost:8000/metadata
+curl http://localhost:8000/schema
 ```
 
 ### Run inference baseline
 
 ```bash
-# Local run against OpenAI-compatible endpoint
-HF_TOKEN=<your-api-key> python inference.py
-
-# Hackathon/evaluator mode: the provided LiteLLM proxy key should win if present
-API_BASE_URL=https://your-endpoint/v1 MODEL_NAME=your-model API_KEY=<proxy-key> python inference.py
-
-# HF_TOKEN is still accepted as a local fallback when API_KEY is not injected
-API_BASE_URL=https://your-endpoint/v1 MODEL_NAME=your-model HF_TOKEN=<token> python inference.py
+# Run against the locally built Docker image
+LOCAL_IMAGE_NAME=incident-response-env \
+API_BASE_URL=https://your-endpoint/v1 \
+MODEL_NAME=your-model \
+HF_TOKEN=<token> \
+INCIDENT_RESPONSE_TASK=easy_oom_outage \
+python inference.py
 ```
 
-The submission validator expects LLM traffic to go through the injected `API_BASE_URL`.
-`inference.py` therefore prefers `API_KEY` when it is present, falls back to `HF_TOKEN`
-for local development, and keeps `[START]`, `[STEP]`, and `[END]` logs on single lines
-so the evaluator can parse them reliably.
+`inference.py` now runs exactly one task per invocation and emits only the required
+`[START]`, `[STEP]`, and `[END]` lines on stdout. It uses `HF_TOKEN` with the OpenAI
+client for all LLM calls and supports `LOCAL_IMAGE_NAME` for `from_docker_image()`.
 
 ### Run tests
 
@@ -264,10 +269,15 @@ pytest tests/ -v
 ## Architecture
 
 ```
+incident_response_env/
+├── client.py           Typed OpenEnv client used by inference.py
+├── models.py           Public Action / Observation / State exports
+server/
+├── app.py              OpenEnv FastAPI / WebSocket server entry point
+├── incident_response_environment.py  Stateful OpenEnv wrapper
 src/
-├── env.py              Main IncidentResponseEnv class (OpenEnv interface)
-├── models.py           Pydantic v2 models: Action, Observation, Reward, State
-├── server.py           FastAPI HTTP server
+├── env.py              Core simulator and task registry
+├── models.py           Internal typed models shared by tasks and wrappers
 ├── tasks/
 │   ├── base.py         Abstract BaseTask
 │   ├── easy_oom_outage.py    Task 1 implementation

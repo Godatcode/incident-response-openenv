@@ -16,28 +16,28 @@ from src.env import IncidentResponseEnv
 def test_resolve_runtime_config_prefers_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_BASE_URL", " https://proxy.example/v1 ")
     monkeypatch.setenv("MODEL_NAME", " meta-model ")
-    monkeypatch.setenv("API_KEY", " proxy-key ")
-    monkeypatch.setenv("HF_TOKEN", " fallback-token ")
+    monkeypatch.setenv("HF_TOKEN", " token ")
 
     config = resolve_runtime_config()
 
     assert config.api_base_url == "https://proxy.example/v1"
     assert config.model_name == "meta-model"
-    assert config.api_key == "proxy-key"
-    assert config.api_key_source == "API_KEY"
+    assert config.hf_token == "token"
+    assert config.task_name == "easy_oom_outage"
+    assert config.benchmark_name == "incident_response"
 
 
-def test_resolve_runtime_config_requires_api_base_url_with_api_key(
+def test_resolve_runtime_config_uses_defaults_without_api_base_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("API_BASE_URL", raising=False)
     monkeypatch.delenv("MODEL_NAME", raising=False)
-    monkeypatch.setenv("API_KEY", "proxy-key")
-    monkeypatch.delenv("HF_TOKEN", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("HF_TOKEN", "token")
 
-    with pytest.raises(RuntimeError, match="API_BASE_URL is required"):
-        resolve_runtime_config()
+    config = resolve_runtime_config()
+
+    assert config.api_base_url == "https://router.huggingface.co/v1"
+    assert config.model_name == "Qwen/Qwen2.5-72B-Instruct"
 
 
 def test_parse_model_action_strips_markdown_fences() -> None:
