@@ -13,7 +13,7 @@ class MediumGrader(BaseGrader):
       avoided_red_herring       +0.10  — never rolled back / restarted search-service
       rolled_back_order         +0.25  — rolled back order-service
       verified_downstream       +0.15  — ran healthcheck or checked inventory-service after rollback
-      marked_resolved_correct   +0.25  — resolution mentions deploy + order-service
+      marked_resolved_correct   +0.24  — resolution mentions deploy + order-service
     Penalties:
       rollback_wrong_service    -0.15  per wrong rollback
       restart_instead_rollback  -0.05  restarted order-service instead of rollback
@@ -25,7 +25,7 @@ class MediumGrader(BaseGrader):
         "avoided_red_herring": 0.10,
         "rolled_back_order": 0.25,
         "verified_downstream": 0.15,
-        "marked_resolved_correct": 0.25,
+        "marked_resolved_correct": 0.24,
     }
 
     def get_checkpoints(self) -> dict[str, float]:
@@ -117,10 +117,11 @@ class MediumGrader(BaseGrader):
         return hit
 
     def grade(self, action_history: list[dict], state: dict) -> float:
+        """Compute total score strictly within (0, 1)."""
         services = state.get("services", {})
         if not action_history:
-            return 0.0
+            return 0.01
         latest = action_history[-1]
         checkpoints = self.evaluate_checkpoints(action_history, services, latest)
         score = sum(self._CHECKPOINTS.get(c, 0.0) for c in checkpoints)
-        return min(1.0, max(0.0, score))
+        return min(0.99, max(0.01, score))

@@ -12,7 +12,7 @@ class EasyGrader(BaseGrader):
       identified_oom           +0.15  — queried memory metrics OR checked logs (OOM seen)
       restarted_correct        +0.30  — restarted user-service
       healthcheck_passed       +0.15  — ran healthcheck on user-service after restart
-      marked_resolved_correct  +0.25  — marked resolved with OOM + user-service in summary
+      marked_resolved_correct  +0.24  — marked resolved with OOM + user-service in summary
     Penalties:
       restart_wrong_service    -0.10  per wrong restart
       random_actions           -0.05  per clearly irrelevant action
@@ -23,7 +23,7 @@ class EasyGrader(BaseGrader):
         "identified_oom": 0.15,
         "restarted_correct": 0.30,
         "healthcheck_passed": 0.15,
-        "marked_resolved_correct": 0.25,
+        "marked_resolved_correct": 0.24,
     }
 
     def get_checkpoints(self) -> dict[str, float]:
@@ -111,12 +111,11 @@ class EasyGrader(BaseGrader):
         return hit
 
     def grade(self, action_history: list[dict], state: dict) -> float:
-        """Compute total score from 0.0 to 1.0."""
-        # Reconstruct checkpoints
+        """Compute total score strictly within (0, 1)."""
         services = state.get("services", {})
         if not action_history:
-            return 0.0
+            return 0.01
         latest = action_history[-1]
         checkpoints = self.evaluate_checkpoints(action_history, services, latest)
         score = sum(self._CHECKPOINTS.get(c, 0.0) for c in checkpoints)
-        return min(1.0, max(0.0, score))
+        return min(0.99, max(0.01, score))

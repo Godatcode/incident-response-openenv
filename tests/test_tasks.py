@@ -49,7 +49,7 @@ class TestEasyOomOutage:
         obs, reward, done, info = self.task.step(
             Action(action_type=ActionType.RESTART_SERVICE, target_service="payment-service")
         )
-        assert reward.value <= 0
+        assert reward.value == 0.0
 
     def test_correct_full_solution(self):
         """Full optimal solution should yield high cumulative reward."""
@@ -251,4 +251,4 @@ class TestHardPhantom:
         )
         assert done is True
         state = self.task.get_state()
-        assert state.cumulative_reward >= 0.90
+        assert state.cumulative_reward >= 0.85

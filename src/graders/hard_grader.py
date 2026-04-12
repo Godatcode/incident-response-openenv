@@ -16,7 +16,7 @@ class HardGrader(BaseGrader):
       scaled_cache               +0.20  — scaled cache-layer (correct mitigation)
       did_not_restart_cache      +0.05  — bonus if cache was never restarted
       healthcheck_after_scale    +0.05  — ran healthcheck after scaling
-      marked_resolved_correct    +0.15  — resolution mentions memory leak/GC + cache-layer
+      marked_resolved_correct    +0.14  — resolution mentions memory leak/GC + cache-layer
     Penalties:
       restarted_cache_layer      -0.20  — worst possible action (thundering herd)
       rolled_back_auth_service   -0.10  — chasing red herring
@@ -32,7 +32,7 @@ class HardGrader(BaseGrader):
         "scaled_cache": 0.20,
         "did_not_restart_cache": 0.05,
         "healthcheck_after_scale": 0.05,
-        "marked_resolved_correct": 0.15,
+        "marked_resolved_correct": 0.14,
     }
 
     def get_checkpoints(self) -> dict[str, float]:
@@ -152,10 +152,11 @@ class HardGrader(BaseGrader):
         return hit
 
     def grade(self, action_history: list[dict], state: dict) -> float:
+        """Compute total score strictly within (0, 1)."""
         services = state.get("services", {})
         if not action_history:
-            return 0.0
+            return 0.01
         latest = action_history[-1]
         checkpoints = self.evaluate_checkpoints(action_history, services, latest)
         score = sum(self._CHECKPOINTS.get(c, 0.0) for c in checkpoints)
-        return min(1.0, max(0.0, score))
+        return min(0.99, max(0.01, score))

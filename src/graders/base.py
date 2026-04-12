@@ -10,7 +10,7 @@ class BaseGrader(ABC):
     def grade(self, action_history: list[dict], state: dict) -> float:
         """
         Compute total cumulative score given action history and current state.
-        Returns float in [0.0, 1.0].
+        Returns float strictly within (0, 1) — never 0.0 or 1.0.
         """
         ...
 

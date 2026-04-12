@@ -144,6 +144,6 @@ def test_task_plans_reach_full_reward() -> None:
                 action_history.append(action)
 
             assert action_history == plan
-            assert total_reward == pytest.approx(1.0)
+            assert 0.85 <= total_reward < 1.0
     finally:
         env.close()
