@@ -240,9 +240,10 @@ INCIDENT_RESPONSE_TASK=easy_oom_outage \
 python inference.py
 ```
 
-`inference.py` now runs exactly one task per invocation and emits only the required
-`[START]`, `[STEP]`, and `[END]` lines on stdout. It uses `HF_TOKEN` with the OpenAI
-client for all LLM calls and supports `LOCAL_IMAGE_NAME` for `from_docker_image()`.
+`inference.py` emits only the required `[START]`, `[STEP]`, and `[END]` lines on
+stdout. By default it runs all three tasks, falls back to the in-process simulator
+when no `LOCAL_IMAGE_NAME` or `OPENENV_BASE_URL` is provided, and uses the OpenAI
+client when `HF_TOKEN` or `OPENAI_API_KEY` is available.
 
 ### Run tests
 

@@ -11,9 +11,17 @@ import textwrap
 from dataclasses import dataclass
 from typing import Any
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 from incident_response_env import IncidentResponseAction, IncidentResponseEnv
+from incident_response_env.models import (
+    IncidentResponseObservation,
+    IncidentResponseState,
+)
+from src.env import IncidentResponseEnv as IncidentResponseSimulator
 
 TASK_PLANS: dict[str, list[dict[str, Any]]] = {
     "easy_oom_outage": [
@@ -76,6 +84,7 @@ TASK_PLANS: dict[str, list[dict[str, Any]]] = {
         },
     ],
 }
+TASK_NAMES: tuple[str, ...] = tuple(TASK_PLANS)
 
 SYSTEM_PROMPT = textwrap.dedent(
     """
@@ -93,7 +102,7 @@ class RuntimeConfig:
     model_name: str
     hf_token: str | None
     benchmark_name: str
-    task_name: str
+    task_name: str | None
     local_image_name: str | None
     env_base_url: str | None
 
@@ -120,24 +129,65 @@ def resolve_runtime_config() -> RuntimeConfig:
             )
             or "incident_response"
         ),
-        task_name=(
-            _read_env(
-                "INCIDENT_RESPONSE_TASK",
-                "OPENENV_TASK",
-                "TASK_NAME",
-                "MY_ENV_V4_TASK",
-            )
-            or "easy_oom_outage"
+        task_name=_read_env(
+            "INCIDENT_RESPONSE_TASK",
+            "OPENENV_TASK",
+            "TASK_NAME",
+            "MY_ENV_V4_TASK",
         ),
         local_image_name=_read_env("LOCAL_IMAGE_NAME", "IMAGE_NAME"),
         env_base_url=_read_env("OPENENV_BASE_URL", "ENV_BASE_URL", "BASE_URL"),
     )
 
 
-def create_client(config: RuntimeConfig) -> OpenAI:
-    if not config.hf_token:
-        raise RuntimeError("HF_TOKEN is required for model inference.")
-    return OpenAI(base_url=config.api_base_url, api_key=config.hf_token)
+def create_client(config: RuntimeConfig) -> Any:
+    if OpenAI is None:
+        return None
+    api_key = config.hf_token or _read_env("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    return OpenAI(base_url=config.api_base_url, api_key=api_key)
+
+
+@dataclass
+class StepEnvelope:
+    observation: IncidentResponseObservation
+    reward: float | None
+    done: bool
+
+
+class LocalEnvironmentAdapter:
+    """Async-compatible adapter for the in-process incident response simulator."""
+
+    def __init__(self) -> None:
+        self._env = IncidentResponseSimulator()
+
+    async def connect(self) -> None:
+        return None
+
+    async def reset(self, task_name: str) -> StepEnvelope:
+        observation = self._env.reset(task_name=task_name)
+        return StepEnvelope(
+            observation=IncidentResponseObservation(**observation.model_dump()),
+            reward=0.0,
+            done=False,
+        )
+
+    async def step(self, action: IncidentResponseAction) -> StepEnvelope:
+        observation, reward, done, info = self._env.step(action)
+        payload = observation.model_dump()
+        payload["metadata"] = {"info": info} if info else {}
+        return StepEnvelope(
+            observation=IncidentResponseObservation(**payload),
+            reward=reward.value,
+            done=done,
+        )
+
+    async def state(self) -> IncidentResponseState:
+        return IncidentResponseState(**self._env.state().model_dump())
+
+    async def close(self) -> None:
+        self._env.close()
 
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -200,6 +250,12 @@ def parse_model_action(text: str) -> dict[str, Any] | None:
     return payload
 
 
+def resolve_task_names(config: RuntimeConfig) -> list[str]:
+    if config.task_name and config.task_name in TASK_PLANS:
+        return [config.task_name]
+    return list(TASK_NAMES)
+
+
 def choose_planned_action(
     task_name: str, action_history: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -257,8 +313,10 @@ def format_observation(observation: Any) -> str:
 
 
 def request_model_action(
-    client: OpenAI, config: RuntimeConfig, observation_text: str
+    client: Any, config: RuntimeConfig, observation_text: str
 ) -> str:
+    if client is None:
+        return "{}"
     try:
         completion = client.chat.completions.create(
             model=config.model_name,
@@ -284,40 +342,41 @@ def extract_last_action_error(observation: Any) -> str | None:
     return None
 
 
-async def create_environment(config: RuntimeConfig) -> IncidentResponseEnv:
+async def create_environment(
+    config: RuntimeConfig,
+) -> IncidentResponseEnv | LocalEnvironmentAdapter:
     if config.env_base_url:
         env = IncidentResponseEnv(base_url=config.env_base_url)
         await env.connect()
         return env
     if config.local_image_name:
         return await IncidentResponseEnv.from_docker_image(config.local_image_name)
-    raise RuntimeError(
-        "Set LOCAL_IMAGE_NAME to launch the environment image, or OPENENV_BASE_URL "
-        "to connect to a running server."
-    )
+    env = LocalEnvironmentAdapter()
+    await env.connect()
+    return env
 
 
-async def run_episode() -> int:
-    config = resolve_runtime_config()
-
+async def run_task(
+    config: RuntimeConfig,
+    env: IncidentResponseEnv | LocalEnvironmentAdapter,
+    client: Any,
+    task_name: str,
+) -> bool:
     rewards: list[float] = []
     steps_taken = 0
     success = False
-    env: IncidentResponseEnv | None = None
 
-    log_start(config.task_name, config.benchmark_name, config.model_name)
+    log_start(task_name, config.benchmark_name, config.model_name)
 
     try:
-        client = create_client(config)
-        env = await create_environment(config)
-        result = await env.reset(task_name=config.task_name)
+        result = await env.reset(task_name=task_name)
         action_history: list[dict[str, Any]] = []
 
         while not result.done and result.observation.step_number < result.observation.max_steps:
             observation_text = format_observation(result.observation)
             model_response = request_model_action(client, config, observation_text)
             model_action = parse_model_action(model_response)
-            action_payload = select_action(config.task_name, action_history, model_action)
+            action_payload = select_action(task_name, action_history, model_action)
             action_history.append(copy.deepcopy(action_payload))
 
             result = await env.step(IncidentResponseAction(**action_payload))
@@ -338,15 +397,37 @@ async def run_episode() -> int:
         success = score >= 0.80
     except Exception:
         success = False
+    log_end(success=success, steps=steps_taken, rewards=rewards)
+    return success
+
+
+async def run_episode() -> int:
+    config = resolve_runtime_config()
+    task_names = resolve_task_names(config)
+    client = create_client(config)
+    env: IncidentResponseEnv | LocalEnvironmentAdapter | None = None
+
+    try:
+        env = await create_environment(config)
+        for task_name in task_names:
+            task_config = RuntimeConfig(
+                api_base_url=config.api_base_url,
+                model_name=config.model_name,
+                hf_token=config.hf_token,
+                benchmark_name=config.benchmark_name,
+                task_name=task_name,
+                local_image_name=config.local_image_name,
+                env_base_url=config.env_base_url,
+            )
+            await run_task(task_config, env, client, task_name)
     finally:
         if env is not None:
             try:
                 await env.close()
             except Exception:
                 pass
-        log_end(success=success, steps=steps_taken, rewards=rewards)
 
-    return 0 if success else 1
+    return 0
 
 
 def main() -> int:
