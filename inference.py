@@ -91,7 +91,7 @@ SYSTEM_PROMPT = textwrap.dedent(
 class RuntimeConfig:
     api_base_url: str
     model_name: str
-    hf_token: str
+    hf_token: str | None
     benchmark_name: str
     task_name: str
     local_image_name: str | None
@@ -107,14 +107,10 @@ def _read_env(*names: str) -> str | None:
 
 
 def resolve_runtime_config() -> RuntimeConfig:
-    hf_token = _read_env("HF_TOKEN")
-    if not hf_token:
-        raise RuntimeError("HF_TOKEN is required for model inference.")
-
     return RuntimeConfig(
         api_base_url=_read_env("API_BASE_URL") or "https://router.huggingface.co/v1",
         model_name=_read_env("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct",
-        hf_token=hf_token,
+        hf_token=_read_env("HF_TOKEN"),
         benchmark_name=(
             _read_env(
                 "INCIDENT_RESPONSE_BENCHMARK",
@@ -139,6 +135,8 @@ def resolve_runtime_config() -> RuntimeConfig:
 
 
 def create_client(config: RuntimeConfig) -> OpenAI:
+    if not config.hf_token:
+        raise RuntimeError("HF_TOKEN is required for model inference.")
     return OpenAI(base_url=config.api_base_url, api_key=config.hf_token)
 
 
@@ -301,7 +299,6 @@ async def create_environment(config: RuntimeConfig) -> IncidentResponseEnv:
 
 async def run_episode() -> int:
     config = resolve_runtime_config()
-    client = create_client(config)
 
     rewards: list[float] = []
     steps_taken = 0
@@ -311,6 +308,7 @@ async def run_episode() -> int:
     log_start(config.task_name, config.benchmark_name, config.model_name)
 
     try:
+        client = create_client(config)
         env = await create_environment(config)
         result = await env.reset(task_name=config.task_name)
         action_history: list[dict[str, Any]] = []

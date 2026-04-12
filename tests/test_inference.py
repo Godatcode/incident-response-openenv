@@ -40,6 +40,16 @@ def test_resolve_runtime_config_uses_defaults_without_api_base_url(
     assert config.model_name == "Qwen/Qwen2.5-72B-Instruct"
 
 
+def test_resolve_runtime_config_allows_missing_hf_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+
+    config = resolve_runtime_config()
+
+    assert config.hf_token is None
+
+
 def test_parse_model_action_strips_markdown_fences() -> None:
     payload = """```json
 {"action_type":"check_logs","target_service":"user-service"}
