@@ -224,12 +224,20 @@ curl http://localhost:8000/state
 ### Run inference baseline
 
 ```bash
-# Requires a running environment server (see above)
+# Local run against OpenAI-compatible endpoint
 HF_TOKEN=<your-api-key> python inference.py
 
-# Override model and endpoint
+# Hackathon/evaluator mode: the provided LiteLLM proxy key should win if present
+API_BASE_URL=https://your-endpoint/v1 MODEL_NAME=your-model API_KEY=<proxy-key> python inference.py
+
+# HF_TOKEN is still accepted as a local fallback when API_KEY is not injected
 API_BASE_URL=https://your-endpoint/v1 MODEL_NAME=your-model HF_TOKEN=<token> python inference.py
 ```
+
+The submission validator expects LLM traffic to go through the injected `API_BASE_URL`.
+`inference.py` therefore prefers `API_KEY` when it is present, falls back to `HF_TOKEN`
+for local development, and keeps `[START]`, `[STEP]`, and `[END]` logs on single lines
+so the evaluator can parse them reliably.
 
 ### Run tests
 
