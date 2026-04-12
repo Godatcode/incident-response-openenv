@@ -345,12 +345,23 @@ def extract_last_action_error(observation: Any) -> str | None:
 async def create_environment(
     config: RuntimeConfig,
 ) -> IncidentResponseEnv | LocalEnvironmentAdapter:
+    # Try remote env first (evaluator provides this via env var)
     if config.env_base_url:
-        env = IncidentResponseEnv(base_url=config.env_base_url)
-        await env.connect()
-        return env
+        try:
+            env = IncidentResponseEnv(base_url=config.env_base_url)
+            await env.connect()
+            return env
+        except Exception as exc:
+            print(f"[WARN] remote env failed ({exc}), trying fallback", flush=True)
+
+    # Try Docker-based env (local development only)
     if config.local_image_name:
-        return await IncidentResponseEnv.from_docker_image(config.local_image_name)
+        try:
+            return await IncidentResponseEnv.from_docker_image(config.local_image_name)
+        except Exception as exc:
+            print(f"[WARN] docker env failed ({exc}), trying fallback", flush=True)
+
+    # Fall back to in-process simulator
     env = LocalEnvironmentAdapter()
     await env.connect()
     return env
@@ -409,6 +420,11 @@ async def run_episode() -> int:
 
     try:
         env = await create_environment(config)
+    except Exception as exc:
+        print(f"[ERROR] all env creation methods failed: {exc}", flush=True)
+        return 0
+
+    try:
         for task_name in task_names:
             task_config = RuntimeConfig(
                 api_base_url=config.api_base_url,
@@ -421,17 +437,20 @@ async def run_episode() -> int:
             )
             await run_task(task_config, env, client, task_name)
     finally:
-        if env is not None:
-            try:
-                await env.close()
-            except Exception:
-                pass
+        try:
+            await env.close()
+        except Exception:
+            pass
 
     return 0
 
 
 def main() -> int:
-    return asyncio.run(run_episode())
+    try:
+        return asyncio.run(run_episode())
+    except Exception as exc:
+        print(f"[ERROR] inference.py unhandled exception: {exc}", flush=True)
+        return 0
 
 
 if __name__ == "__main__":
